@@ -1,5 +1,6 @@
 #include "GacLib\GacUI.h"
 #include "GacLib\GacUIWindows.h"
+#include <vector>
 
 #pragma warning(disable:4244)
 
@@ -11,7 +12,6 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 class OscilloscopeMainWindow : public GuiWindow
 {
 private:
-	IStyleController*				m_defaultStyleController;
 	GuiToolstripMenuBar*			m_menuBar;
 	GuiDirect2DElement*				m_OscilloscopeScreen;
 
@@ -20,7 +20,10 @@ private:
 	ComPtr<IDWriteTextFormat>		m_defaultTextFormat;
 	ComPtr<ID2D1SolidColorBrush>	m_defaultTextBrush;
 
-	GuiToolstripCommand*			m_commandDebugShowFPS;
+	GuiToolstripCommand*				m_commandDebugShowFPS;
+	std::vector<GuiToolstripCommand*>	m_portsCommand;
+	std::vector<vl::WString>			m_availableSerialPorts;
+	
 
 	//////////////////////////////////////////////////////////////
 	//				      Internal States						//
@@ -29,11 +32,12 @@ private:
 
 public:
 	OscilloscopeMainWindow()
-		: GuiWindow(m_defaultStyleController = GetCurrentTheme()->CreateWindowStyle())
+		: GuiWindow(GetCurrentTheme()->CreateWindowStyle())
 	{
 		// Initial internal states
 		m_showFPS = false;
 
+		m_availableSerialPorts.push_back(WString(L"COM1"));
 		// Initial windows elements and layout
 		this->SetText(L"Oscilloscope V0.01");
 		this->SetClientSize(Size(800, 600));
@@ -69,6 +73,8 @@ public:
 				->Splitter()
 				->EndSubMenu()
 				->Button(0, L"Input")
+				->BeginSubMenu()
+				->Button(0, L"Serial Port")
 				->EndSubMenu()
 				->Button(0, L"Debug")
 				->BeginSubMenu()
@@ -114,7 +120,19 @@ public:
 		}
 
 		// Create some threads to peek and read serial ports
-		vl::Thread
+
+		//GetApplication()->InvokeInMainThread([=]()
+		//{
+		//	for each (WString portName in m_availableSerialPorts)
+		//	{
+		//		GuiToolstripCommand* portCommand = new GuiToolstripCommand;
+		//		portCommand->SetText(portName);
+		//		portCommand->Executed.AttachMethod(this, &OscilloscopeMainWindow::OnSelectSerialPort);
+		//		GuiToolstripButton* portButton = new GuiToolstripButton(GetCurrentTheme()->CreateMenuItemButtonStyle());
+		//		portButton->SetCommand(portCommand);
+		//	}
+		//});
+		
 	}
 
 	void OnRendering(GuiGraphicsComposition* sender, GuiDirect2DElementEventArgs& arguments)
@@ -205,6 +223,13 @@ public:
 	{
 		m_showFPS = !m_showFPS;
 	}
+
+	void OnSelectSerialPort(GuiGraphicsComposition* sender, GuiEventArgs& arguments)
+	{
+
+	}
+
+
 	void InitializeCommands()
 	{
 		{
