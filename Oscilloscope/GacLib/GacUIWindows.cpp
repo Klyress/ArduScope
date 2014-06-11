@@ -3563,7 +3563,7 @@ WindowsInputService
 			{
 				if(!IsTimerEnabled())
 				{
-					SetTimer(ownerHandle, 1, 16, NULL);
+					SetTimer(ownerHandle, 1, 1, NULL);
 					isTimerEnabled=true;
 				}
 			}

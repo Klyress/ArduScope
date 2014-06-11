@@ -11,19 +11,34 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 class OscilloscopeMainWindow : public GuiWindow
 {
 private:
-	IStyleController*		m_defaultStyleController;
-	GuiToolstripMenuBar*	m_menuBar;
-	GuiDirect2DElement*		m_OscilloscopeScreen;
+	IStyleController*				m_defaultStyleController;
+	GuiToolstripMenuBar*			m_menuBar;
+	GuiDirect2DElement*				m_OscilloscopeScreen;
 
-	GuiToolstripButton*		m_ButtonStart;
-	ComPtr<ID2D1SolidColorBrush> m_TestBrush;
+	GuiToolstripButton*				m_ButtonStart;
+	ComPtr<ID2D1SolidColorBrush>	m_TestBrush;
+	ComPtr<IDWriteTextFormat>		m_defaultTextFormat;
+	ComPtr<ID2D1SolidColorBrush>	m_defaultTextBrush;
+
+	GuiToolstripCommand*			m_commandDebugShowFPS;
+
+	//////////////////////////////////////////////////////////////
+	//				      Internal States						//
+	//////////////////////////////////////////////////////////////
+	bool m_showFPS;
 
 public:
 	OscilloscopeMainWindow()
 		: GuiWindow(m_defaultStyleController = GetCurrentTheme()->CreateWindowStyle())
 	{
+		// Initial internal states
+		m_showFPS = false;
+
+		// Initial windows elements and layout
 		this->SetText(L"Oscilloscope V0.01");
 		this->SetClientSize(Size(800, 600));
+
+		InitializeCommands();
 
 		GuiTableComposition* table = new GuiTableComposition;
 		table->SetCellPadding(0);
@@ -52,7 +67,12 @@ public:
 				->Button(0, L"View")
 				->BeginSubMenu()
 				->Splitter()
-				->Splitter()
+				->EndSubMenu()
+				->Button(0, L"Input")
+				->EndSubMenu()
+				->Button(0, L"Debug")
+				->BeginSubMenu()
+				->Button(m_commandDebugShowFPS)
 				->EndSubMenu();
 			cell->AddChild(m_menuBar->GetBoundsComposition());
 		}
@@ -64,7 +84,7 @@ public:
 			cell->SetSite(1, 0, 1, 1);
 			cell->SetInternalMargin(Margin(1, 0, 1, 0));
 			cell->SetMinSizeLimitation(GuiGraphicsComposition::LimitToElementAndChildren);
-			
+
 			GuiDirect2DElement* element = GuiDirect2DElement::Create();
 			element->Rendering.AttachMethod(this, &OscilloscopeMainWindow::OnRendering);
 			element->BeforeRenderTargetChanged.AttachMethod(this, &OscilloscopeMainWindow::OnRenderTargetLost);
@@ -92,10 +112,13 @@ public:
 			buttonComposition->SetAlignmentToParent(Margin(5, 5, 5, 5));
 			cell->AddChild(m_ButtonStart->GetBoundsComposition());
 		}
+
+		// Create some threads to peek and read serial ports
+		vl::Thread
 	}
 
 	void OnRendering(GuiGraphicsComposition* sender, GuiDirect2DElementEventArgs& arguments)
-	{
+	{	
 		int SurfaceWidth = arguments.bounds.Width();
 		int SurfaceHeight = arguments.bounds.Height();
 		int SurfaceX = arguments.bounds.Left();
@@ -103,11 +126,32 @@ public:
 
 		ID2D1RenderTarget* renderTarget = arguments.rt;
 		renderTarget->Clear(D2D1::ColorF(0, 0, 0));
-		float strokeWidth = 0.5f;
+
+		// Insert a code slice to calculate FPS....
+		{
+			static int lastTick = ::GetTickCount();
+			static int frames = 0;
+			static int fps = 0;
+			if (m_showFPS)
+			{ 
+				int currentTick = ::GetTickCount();
+				if (currentTick - lastTick > 1000)
+				{
+					fps = frames / float(currentTick - lastTick) * 1000.0f;
+					lastTick = currentTick;
+					frames = 0;
+				}
+				frames++;
+				WString fpsString = L"FPS = " + vl::itow(fps);
+				renderTarget->DrawTextW(fpsString.Buffer(), fpsString.Length(), m_defaultTextFormat.Obj(), D2D1::RectF(5.0f + SurfaceX, 5.0f + SurfaceY, 100.0f + SurfaceX, 25.0f + SurfaceY), m_TestBrush.Obj() );
+			}
+		}
+
 		// Draw Background Grid
+		float strokeWidth = 0.5f;
 		{
 			renderTarget->DrawLine(D2D1::Point2F(SurfaceWidth / 2 + SurfaceX, 0 + SurfaceY), D2D1::Point2F(SurfaceWidth / 2 + SurfaceX, SurfaceHeight + SurfaceY), m_TestBrush.Obj(), strokeWidth);
-			
+
 			float Y = SurfaceY;
 			for (int i = 0; i < 100; i++)
 			{
@@ -133,11 +177,44 @@ public:
 		ID2D1SolidColorBrush* brush;
 		arguments.rt->CreateSolidColorBrush(D2D1::ColorF(0.0f, 1.0f, 0.0f), D2D1::BrushProperties(), &brush);
 		m_TestBrush = brush;
+
+		IDWriteTextFormat* format;
+		arguments.factoryDWrite->CreateTextFormat(
+			font.fontFamily.Buffer(),
+			NULL,
+			(font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL),
+			(font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL),
+			DWRITE_FONT_STRETCH_NORMAL,
+			(FLOAT) font.size,
+			L"",
+			&format);
+		m_defaultTextFormat = format;
 	}
 
 	void OnRenderTargetLost(GuiGraphicsComposition* sender, GuiDirect2DElementEventArgs& arguments)
 	{
 		m_TestBrush = NULL;
+		m_defaultTextFormat = NULL;
+	}
+
+	//////////////////////////////////////////////////////////
+	//				Menu Processing Funcs					//
+	//////////////////////////////////////////////////////////
+
+	void OnDebugShowFps(GuiGraphicsComposition* sender, GuiEventArgs& arguments)
+	{
+		m_showFPS = !m_showFPS;
+	}
+	void InitializeCommands()
+	{
+		{
+			m_commandDebugShowFPS = new GuiToolstripCommand;
+			m_commandDebugShowFPS->SetText(L"ShowFPS");
+			this->AddComponent(m_commandDebugShowFPS);
+		}
+
+		// Install processing handler
+		m_commandDebugShowFPS->Executed.AttachMethod(this, &OscilloscopeMainWindow::OnDebugShowFps);
 	}
 };
 
