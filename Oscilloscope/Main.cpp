@@ -1,6 +1,7 @@
 #include "GacLib\GacUI.h"
 #include "GacLib\GacUIWindows.h"
 #include <vector>
+#include <thread>
 
 #pragma warning(disable:4244)
 
@@ -23,6 +24,9 @@ private:
 	GuiToolstripCommand*				m_commandDebugShowFPS;
 	std::vector<GuiToolstripCommand*>	m_portsCommand;
 	std::vector<vl::WString>			m_availableSerialPorts;
+
+	std::thread							m_checkPortsThread;
+	std::thread							m_readPortThread;
 	
 
 	//////////////////////////////////////////////////////////////
@@ -120,19 +124,8 @@ public:
 		}
 
 		// Create some threads to peek and read serial ports
-
-		//GetApplication()->InvokeInMainThread([=]()
-		//{
-		//	for each (WString portName in m_availableSerialPorts)
-		//	{
-		//		GuiToolstripCommand* portCommand = new GuiToolstripCommand;
-		//		portCommand->SetText(portName);
-		//		portCommand->Executed.AttachMethod(this, &OscilloscopeMainWindow::OnSelectSerialPort);
-		//		GuiToolstripButton* portButton = new GuiToolstripButton(GetCurrentTheme()->CreateMenuItemButtonStyle());
-		//		portButton->SetCommand(portCommand);
-		//	}
-		//});
-		
+		m_checkPortsThread = std::thread(&OscilloscopeMainWindow::CheckSerialPorts, this);
+		m_readPortThread = std::thread(&OscilloscopeMainWindow::ReadSerialPort, this);
 	}
 
 	void OnRendering(GuiGraphicsComposition* sender, GuiDirect2DElementEventArgs& arguments)
@@ -240,6 +233,54 @@ public:
 
 		// Install processing handler
 		m_commandDebugShowFPS->Executed.AttachMethod(this, &OscilloscopeMainWindow::OnDebugShowFps);
+	}
+
+	//////////////////////////////////////////////////////////
+	//				Thread Function							//
+	//////////////////////////////////////////////////////////
+	void CheckSerialPorts()
+	{
+		while (1)
+		{
+			m_availableSerialPorts.clear();
+			// only test 10 ports
+			for (int i = 1; i < 11; i++)
+			{
+				WString portName = WString(L"COM") + vl::itow(i);
+				HANDLE returnValue = CreateFileW(portName.Buffer(), GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+				if (returnValue != INVALID_HANDLE_VALUE)
+				{
+					m_availableSerialPorts.push_back(portName);
+					CloseHandle(returnValue);
+				}
+			}
+			
+			// tell GUI to update menu
+			GetApplication()->InvokeInMainThreadAndWait([=]()
+			{
+				GuiToolstripButton* inputButton = reinterpret_cast<GuiToolstripButton*>(m_menuBar->GetToolstripItems().Get(2));								// 2 is third first level menu....
+				GuiToolstripButton* serialInputButton = reinterpret_cast<GuiToolstripButton*>(inputButton->GetToolstripSubMenu()->GetToolstripItems().Get(0));	// the serial button should be first in input...
+				serialInputButton->DestroySubMenu();
+				serialInputButton->CreateToolstripSubMenu();
+				for each (WString portName in m_availableSerialPorts)
+				{
+					GuiToolstripCommand* portCommand = new GuiToolstripCommand;
+					portCommand->SetText(portName);
+					portCommand->Executed.AttachMethod(this, &OscilloscopeMainWindow::OnSelectSerialPort);
+					GuiToolstripButton* portButton = new GuiToolstripButton(GetCurrentTheme()->CreateMenuItemButtonStyle());
+					portButton->SetCommand(portCommand);
+					serialInputButton->GetToolstripSubMenu()->GetBuilder()->Button(portCommand);
+				}
+			});
+			
+			// Update menu every 3 sec
+			std::this_thread::sleep_for(std::chrono::seconds(3));
+		}
+	}
+
+	void ReadSerialPort()
+	{
+
 	}
 };
 
