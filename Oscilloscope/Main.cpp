@@ -1,4 +1,4 @@
-#include "GacLib\GacUI.h"
+﻿#include "GacLib\GacUI.h"
 #include "GacLib\GacUIWindows.h"
 #include <stdio.h>
 #pragma warning(disable:4244)
@@ -40,6 +40,7 @@ private:
 	GuiToolstripCommand*				m_commandDebugShowFPS;
 	collections::List<GuiToolstripCommand*>		m_portsCommand;
 	collections::List<WString>					m_availableSerialPorts;
+	WString								m_selectedSerialPort;
 
 	Thread*							m_checkPortsThread;
 	Thread*							m_readPortThread;
@@ -234,7 +235,8 @@ public:
 
 	void OnSelectSerialPort(GuiGraphicsComposition* sender, GuiEventArgs& arguments)
 	{
-
+		m_selectedSerialPort = sender->GetAssociatedControl()->GetText();
+		// how to tick a menu item?
 	}
 
 
@@ -261,24 +263,28 @@ public:
 		for (int i = 1; i < 11; i++)
 		{
 			WString portName = WString(L"COM") + vl::itow(i);
-			HANDLE returnValue = CreateFileW(portName.Buffer(), GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-			if (returnValue != INVALID_HANDLE_VALUE)		// port is available
-			{
-				CloseHandle(returnValue);
-				if (!m_availableSerialPorts.Contains(portName))
+			if (portName != m_selectedSerialPort) // don't test selected and working port
+			{				
+				HANDLE returnValue = CreateFileW(portName.Buffer(), GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+				if (returnValue != INVALID_HANDLE_VALUE)		// port is available
 				{
-					m_availableSerialPorts.Add(portName);
-					dirtyMenu = true;
+					CloseHandle(returnValue);
+					if (!m_availableSerialPorts.Contains(portName))
+					{
+						m_availableSerialPorts.Add(portName);
+						dirtyMenu = true;
+					}
+				}
+				else
+				{
+					if (m_availableSerialPorts.Contains(portName))
+					{
+						m_availableSerialPorts.Remove(portName);
+						dirtyMenu = true;
+					}
 				}
 			}
-			else
-			{
-				if (m_availableSerialPorts.Contains(portName))
-				{
-					m_availableSerialPorts.Remove(portName);
-					dirtyMenu = true;
-				}
-			}
+
 		}
 
 		// tell GUI to update menu
