@@ -38,13 +38,16 @@ private:
 	ComPtr<ID2D1SolidColorBrush>	m_defaultTextBrush;
 
 	GuiToolstripCommand*				m_commandDebugShowFPS;
-	collections::List<GuiToolstripCommand*>		m_portsCommand;
-	collections::List<WString>					m_availableSerialPorts;
+	GuiToolstripCommand*				m_commandDisplayStart;
+	//GuiToolstripCommand*				m_portsCommand;
+	collections::List<WString>			m_availableSerialPorts;
 	WString								m_selectedSerialPort;
 
-	Thread*							m_checkPortsThread;
 	Thread*							m_readPortThread;
 
+	HANDLE							m_activePort;
+
+	collections::List<int>			m_A0data;
 
 	//////////////////////////////////////////////////////////////
 	//				      Internal States						//
@@ -57,6 +60,7 @@ public:
 	{
 		// Initial internal states
 		m_showFPS = false;
+		m_activePort = 0;
 
 		// Initial windows elements and layout
 		this->SetText(L"Oscilloscope V0.01");
@@ -130,18 +134,16 @@ public:
 			cell->SetSite(1, 1, 1, 1);
 			cell->SetInternalMargin(Margin(1, 0, 1, 0));
 
-			//GuiTableComposition* table = new GuiTableComposition;
 			m_ButtonStart = g::NewToolBarButton();
 			m_ButtonStart->SetText(L"Start");
 			m_ButtonStart->SetAutoSelection(true);
+			m_ButtonStart->SetCommand(m_commandDisplayStart);
 			GuiBoundsComposition* buttonComposition = m_ButtonStart->GetBoundsComposition();
 			buttonComposition->SetAlignmentToParent(Margin(5, 5, 5, 5));
 			cell->AddChild(m_ButtonStart->GetBoundsComposition());
 		}
 
-		// Create some threads to peek and read serial ports
-		m_checkPortsThread = Thread::CreateAndStart([=](){CheckSerialPorts(); });
-		m_readPortThread = Thread::CreateAndStart([=](){ReadSerialPort(); });
+		CheckSerialPorts();
 	}
 
 	void OnRendering(GuiGraphicsComposition* sender, GuiDirect2DElementEventArgs& arguments)
@@ -235,10 +237,43 @@ public:
 
 	void OnSelectSerialPort(GuiGraphicsComposition* sender, GuiEventArgs& arguments)
 	{
-		m_selectedSerialPort = sender->GetAssociatedControl()->GetText();
-		// how to tick a menu item?
+		GuiToolstripButton* selectedButton = reinterpret_cast<GuiToolstripButton*>(sender->GetAssociatedControl());
+		m_selectedSerialPort = selectedButton->GetText();
+
+		// open it for read
+		if (m_activePort)
+		{
+			CloseHandle(m_activePort);
+		}
+		m_activePort = CreateFileW(m_selectedSerialPort.Buffer(), GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		
+		selectedButton->SetSelected(1);
 	}
 
+	void OnDisplayStart(GuiGraphicsComposition* sender, GuiEventArgs& arguments)
+	{
+		GuiToolstripButton* startDisplayButton = reinterpret_cast<GuiToolstripButton*>(sender->GetAssociatedControl());
+		if (startDisplayButton->GetSelected())
+		{
+			// if start a new data logging, discard all old data
+			m_A0data.Clear();
+			// start data logging from active port
+			if (m_activePort)
+			{
+				m_readPortThread = Thread::CreateAndStart([=](){ReadSerialPort(); });
+			}
+			else
+			{
+				::MessageBox(NULL, L"Select an input source", L"Warning", MB_OK);
+				startDisplayButton->SetSelected(0);
+			}
+		}
+		// stop logging so kill data collection thread
+		else
+		{
+			delete m_readPortThread;
+		}
+	}
 
 	void InitializeCommands()
 	{
@@ -248,17 +283,27 @@ public:
 			this->AddComponent(m_commandDebugShowFPS);
 		}
 
+		{
+			m_commandDisplayStart = new GuiToolstripCommand;
+			m_commandDisplayStart->SetText(L"Start");
+			this->AddComponent(m_commandDisplayStart);
+		}
+
 		// Install processing handler
 		m_commandDebugShowFPS->Executed.AttachMethod(this, &OscilloscopeMainWindow::OnDebugShowFps);
+		m_commandDisplayStart->Executed.AttachMethod(this, &OscilloscopeMainWindow::OnDisplayStart);
 	}
 
 	//////////////////////////////////////////////////////////
 	//				Thread Function							//
 	//////////////////////////////////////////////////////////
+
+	// note: driven by message and no longer a thread function
 	void CheckSerialPorts()
 	{
 		// function only be called when system device changed
-		// test serial port change, now only test 1-10
+		// test serial port change, now only test 1-10 
+		// TODO: check all 255 ports
 		bool dirtyMenu = false;
 		for (int i = 1; i < 11; i++)
 		{
@@ -284,14 +329,12 @@ public:
 					}
 				}
 			}
-
 		}
 
 		// tell GUI to update menu
 		if (dirtyMenu)
 		{
-
-			GetApplication()->InvokeInMainThreadAndWait([=]()
+			GetApplication()->InvokeInMainThread([=]()
 			{
 				GuiToolstripButton* inputButton = reinterpret_cast<GuiToolstripButton*>(m_menuBar->GetToolstripItems().Get(2));								// 2 is third first level menu....
 				GuiToolstripButton* serialInputButton = reinterpret_cast<GuiToolstripButton*>(inputButton->GetToolstripSubMenu()->GetToolstripItems().Get(0));	// the serial button should be first in input...
