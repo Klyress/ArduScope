@@ -1,14 +1,30 @@
 #include "GacLib\GacUI.h"
 #include "GacLib\GacUIWindows.h"
-#include <vector>
-#include <thread>
-
+#include <stdio.h>
 #pragma warning(disable:4244)
+
+LRESULT CALLBACK MessageWindowProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 
 int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int CmdShow)
 {
+	// create a message only window to handle system window messages
+	static const wchar_t* className = L"MessageHandleWindow";
+
+	HWND messageOnlyWindow;
+	WNDCLASSEX wx = {};
+	wx.cbSize = sizeof(WNDCLASSEX);
+	wx.lpfnWndProc = MessageWindowProc;
+	wx.hInstance = hInstance;
+	wx.lpszClassName = className;
+	if (RegisterClassEx(&wx))
+	{
+		messageOnlyWindow = CreateWindowEx(0, className, L"MessageWnd", 0, 0, 0, 0, 0, NULL, NULL, hInstance, NULL);
+	}
+
+	// start gacui
 	return SetupWindowsDirect2DRenderer();
 }
+
 
 class OscilloscopeMainWindow : public GuiWindow
 {
@@ -22,12 +38,12 @@ private:
 	ComPtr<ID2D1SolidColorBrush>	m_defaultTextBrush;
 
 	GuiToolstripCommand*				m_commandDebugShowFPS;
-	std::vector<GuiToolstripCommand*>	m_portsCommand;
-	std::vector<vl::WString>			m_availableSerialPorts;
+	collections::List<GuiToolstripCommand*>		m_portsCommand;
+	collections::List<WString>					m_availableSerialPorts;
 
-	std::thread							m_checkPortsThread;
-	std::thread							m_readPortThread;
-	
+	Thread*							m_checkPortsThread;
+	Thread*							m_readPortThread;
+
 
 	//////////////////////////////////////////////////////////////
 	//				      Internal States						//
@@ -41,7 +57,6 @@ public:
 		// Initial internal states
 		m_showFPS = false;
 
-		m_availableSerialPorts.push_back(WString(L"COM1"));
 		// Initial windows elements and layout
 		this->SetText(L"Oscilloscope V0.01");
 		this->SetClientSize(Size(800, 600));
@@ -124,12 +139,12 @@ public:
 		}
 
 		// Create some threads to peek and read serial ports
-		m_checkPortsThread = std::thread(&OscilloscopeMainWindow::CheckSerialPorts, this);
-		m_readPortThread = std::thread(&OscilloscopeMainWindow::ReadSerialPort, this);
+		m_checkPortsThread = Thread::CreateAndStart([=](){CheckSerialPorts(); });
+		m_readPortThread = Thread::CreateAndStart([=](){ReadSerialPort(); });
 	}
 
 	void OnRendering(GuiGraphicsComposition* sender, GuiDirect2DElementEventArgs& arguments)
-	{	
+	{
 		int SurfaceWidth = arguments.bounds.Width();
 		int SurfaceHeight = arguments.bounds.Height();
 		int SurfaceX = arguments.bounds.Left();
@@ -144,7 +159,7 @@ public:
 			static int frames = 0;
 			static int fps = 0;
 			if (m_showFPS)
-			{ 
+			{
 				int currentTick = ::GetTickCount();
 				if (currentTick - lastTick > 1000)
 				{
@@ -154,7 +169,7 @@ public:
 				}
 				frames++;
 				WString fpsString = L"FPS = " + vl::itow(fps);
-				renderTarget->DrawTextW(fpsString.Buffer(), fpsString.Length(), m_defaultTextFormat.Obj(), D2D1::RectF(5.0f + SurfaceX, 5.0f + SurfaceY, 100.0f + SurfaceX, 25.0f + SurfaceY), m_TestBrush.Obj() );
+				renderTarget->DrawTextW(fpsString.Buffer(), fpsString.Length(), m_defaultTextFormat.Obj(), D2D1::RectF(5.0f + SurfaceX, 5.0f + SurfaceY, 100.0f + SurfaceX, 25.0f + SurfaceY), m_TestBrush.Obj());
 			}
 		}
 
@@ -240,30 +255,45 @@ public:
 	//////////////////////////////////////////////////////////
 	void CheckSerialPorts()
 	{
-		while (1)
+		// function only be called when system device changed
+		// test serial port change, now only test 1-10
+		bool dirtyMenu = false;
+		for (int i = 1; i < 11; i++)
 		{
-			m_availableSerialPorts.clear();
-			// only test 10 ports
-			for (int i = 1; i < 11; i++)
+			WString portName = WString(L"COM") + vl::itow(i);
+			HANDLE returnValue = CreateFileW(portName.Buffer(), GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+			if (returnValue != INVALID_HANDLE_VALUE)		// port is available
 			{
-				WString portName = WString(L"COM") + vl::itow(i);
-				HANDLE returnValue = CreateFileW(portName.Buffer(), GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-				if (returnValue != INVALID_HANDLE_VALUE)
+				CloseHandle(returnValue);
+				if (!m_availableSerialPorts.Contains(portName))
 				{
-					m_availableSerialPorts.push_back(portName);
-					CloseHandle(returnValue);
+					m_availableSerialPorts.Add(portName);
+					dirtyMenu = true;
 				}
 			}
-			
-			// tell GUI to update menu
+			else
+			{
+				if (m_availableSerialPorts.Contains(portName))
+				{
+					m_availableSerialPorts.Remove(portName);
+					dirtyMenu = true;
+				}
+			}
+		}
+
+		// tell GUI to update menu
+		if (dirtyMenu)
+		{
+
 			GetApplication()->InvokeInMainThreadAndWait([=]()
 			{
 				GuiToolstripButton* inputButton = reinterpret_cast<GuiToolstripButton*>(m_menuBar->GetToolstripItems().Get(2));								// 2 is third first level menu....
 				GuiToolstripButton* serialInputButton = reinterpret_cast<GuiToolstripButton*>(inputButton->GetToolstripSubMenu()->GetToolstripItems().Get(0));	// the serial button should be first in input...
 				serialInputButton->DestroySubMenu();
 				serialInputButton->CreateToolstripSubMenu();
-				for each (WString portName in m_availableSerialPorts)
+				for (int i = 0; i < m_availableSerialPorts.Count(); i++)
 				{
+					WString portName = m_availableSerialPorts[i];
 					GuiToolstripCommand* portCommand = new GuiToolstripCommand;
 					portCommand->SetText(portName);
 					portCommand->Executed.AttachMethod(this, &OscilloscopeMainWindow::OnSelectSerialPort);
@@ -272,9 +302,6 @@ public:
 					serialInputButton->GetToolstripSubMenu()->GetBuilder()->Button(portCommand);
 				}
 			});
-			
-			// Update menu every 3 sec
-			std::this_thread::sleep_for(std::chrono::seconds(3));
 		}
 	}
 
@@ -282,11 +309,26 @@ public:
 	{
 
 	}
+
 };
+
 
 void GuiMain()
 {
 	GuiWindow* window = new OscilloscopeMainWindow;
 	GetApplication()->Run(window);
 	delete window;
+}
+
+//////////////////////////////////////////////////////////
+//				Windows Message Handling				//
+//////////////////////////////////////////////////////////
+LRESULT CALLBACK MessageWindowProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+{
+	if (Msg == WM_DEVICECHANGE)
+	{
+		OscilloscopeMainWindow* mainWindow = reinterpret_cast<OscilloscopeMainWindow*>(GetApplication()->GetMainWindow());
+		mainWindow->CheckSerialPorts();
+	}
+	return DefWindowProc(hWnd, Msg, wParam, lParam);
 }
