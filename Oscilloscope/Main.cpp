@@ -260,11 +260,11 @@ public:
 			// start data logging from active port
 			if (m_activePort)
 			{
-				m_readPortThread = Thread::CreateAndStart([=](){ReadSerialPort(); });
+				m_readPortThread = Thread::CreateAndStart([=](){ReadSerialPort();});
 			}
 			else
 			{
-				::MessageBox(NULL, L"Select an input source", L"Warning", MB_OK);
+				GetCurrentController()->DialogService()->ShowMessageBox(0, L"Select an input source", L"Warning");
 				startDisplayButton->SetSelected(0);
 			}
 		}
@@ -356,9 +356,43 @@ public:
 
 	void ReadSerialPort()
 	{
+		char readBuffer[16];		// won't exceed 16 bytes
+		COMSTAT  comstat = {};
+		DWORD dwError = 0;
+		DWORD bytesRead = 0;
+		UINT bytesInBuffer = 0;
 
+		while (1)
+		{	
+			if (ClearCommError(m_activePort, &dwError, &comstat))
+			{
+				bytesInBuffer = comstat.cbInQue;
+			}
+			if (bytesInBuffer == 0)
+			{
+				continue;
+			}
+
+			// if buffer stuck with data, then data should be old, so read it and throw it
+			if (bytesInBuffer > 16)
+			{
+				ReadFile(m_activePort, readBuffer, 16, &bytesRead, NULL);
+				continue;
+			}
+			memset(readBuffer, 0, 16);
+			BOOL result = ReadFile(m_activePort, readBuffer, bytesInBuffer, &bytesRead, NULL);
+			if (!result)
+			{
+				printf("Error%d\n", GetLastError());
+				PurgeComm(m_activePort, PURGE_RXCLEAR | PURGE_RXABORT);
+			}
+			else
+			{
+				// here we got realtime voltage data(quntized from 0(0V) - 1023(5V))
+				int quantizedVoltage = atoi(readBuffer);
+			}
+		}
 	}
-
 };
 
 
